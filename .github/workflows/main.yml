@@ -1,7 +1,16 @@
-name: Free Ubuntu VPS KasmVNC via Tailscale
+name: Free Ubuntu VPS KasmVNC via Tailscale (with tmate debug)
 
 on:
   workflow_dispatch:
+    inputs:
+      enable_tmate:
+        description: 'Bật tmate để SSH debug?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   schedule:
     - cron: '0 */6 * * *'
 
@@ -33,17 +42,24 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get install -y xorg xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
 
+      - name: Setup tmate session (chỉ khi được bật)
+        if: ${{ github.event.inputs.enable_tmate == 'true' || github.event_name == 'schedule' }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          connect-timeout-seconds: 300
+
       - name: Install KasmVNC
         run: |
-          # Tải KasmVNC package mới nhất cho Ubuntu
-          # Bạn có thể vào https://github.com/kasmtech/KasmVNC/releases để lấy link mới nhất
-          wget -O /tmp/kasmvnc.deb https://github.com/kasmtech/KasmVNC/releases/download/v1.3.0/kasmvncserver_jammy_1.3.0_amd64.deb
+          # Tải KasmVNC package mới nhất cho Ubuntu Jammy
+          # Link tham khảo: https://github.com/kasmtech/KasmVNC/releases
+          wget -O /tmp/kasmvnc.deb https://github.com/kasmtech/KasmVNC/releases/download/v1.3.4/kasmvncserver_jammy_1.3.4_amd64.deb
           sudo apt-get install -y /tmp/kasmvnc.deb
 
-          # Thêm user runner vào nhóm ssl-cert để có quyền chạy KasmVNC
+          # Thêm user runner vào nhóm ssl-cert
           sudo adduser runner ssl-cert
 
-      - name: Configure KasmVNC for video playback
+      - name: Configure KasmVNC
         run: |
           # Tạo cấu hình KasmVNC tối ưu cho video
           sudo -u runner mkdir -p /home/runner/.vnc
@@ -72,44 +88,33 @@ jobs:
               hw3d: false
           EOF
 
-          # Đặt quyền cho file cấu hình
           sudo chown -R runner:runner /home/runner/.vnc
           sudo chmod 600 /home/runner/.vnc/kasmvnc.yaml
 
       - name: Set KasmVNC user password
         run: |
-          # Tạo user KasmVNC với mật khẩu
-          # Thay 'YourStrongPassword123!' bằng mật khẩu bạn muốn
-          sudo -u runner bash -c 'echo -e "YourStrongPassword123!\nYourStrongPassword123!\nn\n" | vncpasswd -u runner -w'
+          # Tạo user KasmVNC với mật khẩu vietanh123
+          sudo -u runner bash -c 'echo -e "vietanh123\nvietanh123\nn\n" | vncpasswd -u runner -w'
 
       - name: Start KasmVNC session
         run: |
           # Khởi động KasmVNC với Xfce làm desktop mặc định
-          # Chạy dưới user runner, ở background
           sudo -u runner bash -c 'vncserver -select-de xfce -geometry 1920x1080 -depth 24 &'
-
-          # Đợi KasmVNC khởi động
           sleep 5
 
-          # Kiểm tra log
-          sudo -u runner bash -c 'tail -f /home/runner/.vnc/*.log &'
-          sleep 2
+          # Kiểm tra trạng thái
+          sudo -u runner vncserver -list
+          sudo ss -tlnp | grep 6901 || echo "CẢNH BÁO: Cổng 6901 chưa mở!"
 
       - name: Show connection information
         run: |
           echo "=========================================="
           echo "VPS KasmVNC is ready!"
           echo "=========================================="
-          echo ""
           echo "Access KasmVNC via web browser:"
           echo "  https://$(tailscale ip -4):6901"
           echo ""
           echo "Username: runner"
           echo "Password: vietanh123"
-          echo ""
-          echo "Note: KasmVNC uses HTTPS by default."
-          echo "You may need to accept the self-signed certificate warning."
-          echo ""
           echo "=========================================="
-          # Giữ phiên chạy
           sleep 20700
