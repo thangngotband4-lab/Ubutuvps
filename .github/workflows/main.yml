@@ -1,16 +1,13 @@
-name: Free Ubuntu VPS RDP via Tailscale
+name: Free Ubuntu VPS KasmVNC via Tailscale
 
 on:
-  # Cho phép bạn bấm nút chạy thủ công từ tab Actions
   workflow_dispatch:
-  # Tự động chạy lại mỗi 6 giờ để duy trì VPS
   schedule:
     - cron: '0 */6 * * *'
 
 jobs:
   vps-session:
     runs-on: ubuntu-latest
-    # Đặt timeout dưới 6 giờ một chút để tránh bị GitHub hủy đột ngột
     timeout-minutes: 350
 
     steps:
@@ -23,52 +20,96 @@ jobs:
           sudo apt-get install -y curl wget gnupg apt-transport-https
 
       - name: Install Tailscale
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
+        run: curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: 'github-vps-rdp'
-          # Bạn có thể thêm tags nếu đã tạo tag trong Tailscale ACL
-          # tags: 'tag:ci'
+          hostname: 'github-vps-kasmvnc'
 
-      - name: Install Desktop Environment (Xfce) and xRDP
+      - name: Install Xfce desktop environment
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get install -y xorg xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-          sudo apt-get install -y xrdp
 
-          # Cấu hình xrdp sử dụng Xfce làm desktop mặc định
-          sudo adduser xrdp ssl-cert
-          echo "exec startxfce4" | sudo tee -a /etc/xrdp/xrdp.ini
-
-          # Khởi động lại dịch vụ xrdp
-          sudo systemctl enable xrdp
-          sudo systemctl restart xrdp
-
-      - name: Set RDP password for runner user
+      - name: Install KasmVNC
         run: |
-          # Đặt mật khẩu cho user 'runner' (user mặc định của GitHub Actions)
+          # Tải KasmVNC package mới nhất cho Ubuntu
+          # Bạn có thể vào https://github.com/kasmtech/KasmVNC/releases để lấy link mới nhất
+          wget -O /tmp/kasmvnc.deb https://github.com/kasmtech/KasmVNC/releases/download/v1.3.0/kasmvncserver_jammy_1.3.0_amd64.deb
+          sudo apt-get install -y /tmp/kasmvnc.deb
+
+          # Thêm user runner vào nhóm ssl-cert để có quyền chạy KasmVNC
+          sudo adduser runner ssl-cert
+
+      - name: Configure KasmVNC for video playback
+        run: |
+          # Tạo cấu hình KasmVNC tối ưu cho video
+          sudo -u runner mkdir -p /home/runner/.vnc
+
+          cat > /home/runner/.vnc/kasmvnc.yaml << 'EOF'
+          network:
+            protocol: http
+            websocket_port: 6901
+            ssl:
+              require_ssl: false
+
+          runtime_configuration:
+            allow_client_to_override_kasm_server_settings: true
+
+          encoding:
+            max_frame_rate: 30
+            video_rendering_mode: true
+            jpeg_quality: 85
+            webp_quality: 85
+            compare_frames: false
+
+          desktop:
+            allow_resize: true
+            pixel_depth: 24
+            gpu:
+              hw3d: false
+          EOF
+
+          # Đặt quyền cho file cấu hình
+          sudo chown -R runner:runner /home/runner/.vnc
+          sudo chmod 600 /home/runner/.vnc/kasmvnc.yaml
+
+      - name: Set KasmVNC user password
+        run: |
+          # Tạo user KasmVNC với mật khẩu
           # Thay 'YourStrongPassword123!' bằng mật khẩu bạn muốn
-          echo "runner:vietanh123" | sudo chpasswd
-          echo "RDP User: runner"
-          echo "RDP Password: vietanh123"
+          sudo -u runner bash -c 'echo -e "YourStrongPassword123!\nYourStrongPassword123!\nn\n" | vncpasswd -u runner -w'
 
-      - name: Show Tailscale IP for RDP connection
+      - name: Start KasmVNC session
+        run: |
+          # Khởi động KasmVNC với Xfce làm desktop mặc định
+          # Chạy dưới user runner, ở background
+          sudo -u runner bash -c 'vncserver -select-de xfce -geometry 1920x1080 -depth 24 &'
+
+          # Đợi KasmVNC khởi động
+          sleep 5
+
+          # Kiểm tra log
+          sudo -u runner bash -c 'tail -f /home/runner/.vnc/*.log &'
+          sleep 2
+
+      - name: Show connection information
         run: |
           echo "=========================================="
-          echo "VPS RDP is ready!"
+          echo "VPS KasmVNC is ready!"
           echo "=========================================="
-          echo "Use the following details to connect via RDP:"
           echo ""
-          echo "Server (Tailscale IP):"
-          tailscale ip -4
+          echo "Access KasmVNC via web browser:"
+          echo "  https://$(tailscale ip -4):6901"
           echo ""
           echo "Username: runner"
-          echo "Password: (the one you set above)"
+          echo "Password: vietanh123"
+          echo ""
+          echo "Note: KasmVNC uses HTTPS by default."
+          echo "You may need to accept the self-signed certificate warning."
           echo ""
           echo "=========================================="
-          # Giữ phiên chạy trong 5 giờ 45 phút (345 phút)
+          # Giữ phiên chạy
           sleep 20700
