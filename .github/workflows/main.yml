@@ -1,0 +1,74 @@
+name: Free Ubuntu VPS RDP via Tailscale
+
+on:
+  # Cho phép bạn bấm nút chạy thủ công từ tab Actions
+  workflow_dispatch:
+  # Tự động chạy lại mỗi 6 giờ để duy trì VPS
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  vps-session:
+    runs-on: ubuntu-latest
+    # Đặt timeout dưới 6 giờ một chút để tránh bị GitHub hủy đột ngột
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update system and install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl wget gnupg apt-transport-https
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: 'github-vps-rdp'
+          # Bạn có thể thêm tags nếu đã tạo tag trong Tailscale ACL
+          # tags: 'tag:ci'
+
+      - name: Install Desktop Environment (Xfce) and xRDP
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get install -y xorg xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
+          sudo apt-get install -y xrdp
+
+          # Cấu hình xrdp sử dụng Xfce làm desktop mặc định
+          sudo adduser xrdp ssl-cert
+          echo "exec startxfce4" | sudo tee -a /etc/xrdp/xrdp.ini
+
+          # Khởi động lại dịch vụ xrdp
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Set RDP password for runner user
+        run: |
+          # Đặt mật khẩu cho user 'runner' (user mặc định của GitHub Actions)
+          # Thay 'YourStrongPassword123!' bằng mật khẩu bạn muốn
+          echo "runner:vietanh123" | sudo chpasswd
+          echo "RDP User: runner"
+          echo "RDP Password: vietanh123"
+
+      - name: Show Tailscale IP for RDP connection
+        run: |
+          echo "=========================================="
+          echo "VPS RDP is ready!"
+          echo "=========================================="
+          echo "Use the following details to connect via RDP:"
+          echo ""
+          echo "Server (Tailscale IP):"
+          tailscale ip -4
+          echo ""
+          echo "Username: runner"
+          echo "Password: (the one you set above)"
+          echo ""
+          echo "=========================================="
+          # Giữ phiên chạy trong 5 giờ 45 phút (345 phút)
+          sleep 20700
